@@ -92,6 +92,8 @@ L'installazione scarica automaticamente tutto il necessario (circa 150-250 MB in
 
 ### Modalità Offline (chiavetta USB, senza internet)
 
+> 📥 **Scarica il pacchetto già pronto**: [`SkyTruth-Offline-Bundle.zip`](https://github.com/professorgrandi/SkyTruth-Windows/releases/latest) (allegato alla Release più recente) contiene già tutti i file elencati qui sotto, pronti da estrarre — non serve scaricarli uno per uno manualmente.
+
 Se vuoi installare SkyTruth su un PC senza connessione internet, prepara in anticipo (su un PC con internet) questi file, nelle sottocartelle indicate dentro `SkyTruth_Installer\offline\`:
 
 | Cartella | File da scaricare | Fonte ufficiale |
@@ -106,6 +108,8 @@ Se vuoi installare SkyTruth su un PC senza connessione internet, prepara in anti
 Poi lancia `install.bat` normalmente: l'installer **cerca prima nella cartella `offline\`**, e scarica da internet solo ciò che non trova già pronto lì.
 
 > 💡 Puoi anche mescolare le due modalità: se metti solo *alcuni* dei file sopra, l'installer userà quelli offline disponibili e scaricherà solo i rimanenti.
+
+*(In alternativa a preparare i file uno per uno, ricordati che il pacchetto `SkyTruth-Offline-Bundle.zip` linkato sopra li contiene già tutti pronti — basta estrarlo dentro `offline\`.)*
 
 ### Cosa fa l'installer, passo per passo
 
