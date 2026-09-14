@@ -13,7 +13,7 @@
 
 </div>
 
-![Screenshot di SkyTruth in esecuzione: menu, mappa dati reali, mappa OpenSky, vista webcam](skytruth-screenshot.png)
+![Screenshot di SkyTruth in esecuzione: menu, mappa dati reali, mappa OpenSky, vista webcam](skytruth-screenshot.png?v=2)
 
 ---
 
