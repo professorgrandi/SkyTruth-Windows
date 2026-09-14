@@ -9,7 +9,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-v1.0-brightgreen)
+![Status](https://img.shields.io/badge/status-v1.1-brightgreen)
 
 </div>
 
@@ -31,6 +31,7 @@
 - [Componenti software utilizzati](#componenti-software-utilizzati)
 - [Risoluzione problemi](#risoluzione-problemi)
 - [Architettura tecnica](#architettura-tecnica-per-sviluppatori)
+- [Sito web pubblico](#sito-web-pubblico-opzionale)
 - [Licenza](#licenza)
 - [Crediti](#crediti)
 - [Donazioni](#donazioni)
@@ -59,6 +60,7 @@ Il programma mostra entrambe le mappe **affiancate in tempo reale**, insieme a u
 - 📷 **Visualizzazione webcam live** del cielo (solo streaming, nessuna registrazione automatica)
 - 🎥 **Registrazione video** dell'intera sessione (schermo completo), con FFmpeg, metadati rimossi automaticamente
 - 📝 **Salvataggio testuale delle rilevazioni** (icao, nominativo, altitudine, velocità, rotta, posizione, distanza) in file `.txt`, solo per avvistamenti con dati completi
+- 🌐 **Pubblicazione sessioni sul sito web pubblico** (opzionale): cattura uno snapshot della webcam e caricalo, insieme ai dati della sessione, sul tuo sito personale ([SkyTruth-Windows-Site](https://github.com/professorgrandi/SkyTruth-Windows-Site))
 - 🧹 **Pulizia automatica** di ogni file temporaneo, sia durante l'uso che all'uscita dal programma
 - 🛡️ **Gestione robusta degli errori**: il programma non si blocca mai senza spiegazioni — ogni problema mostra un messaggio chiaro
 - 💻 **Installer completo e automatico**, sia **online** che **offline** (chiavetta USB, nessuna connessione richiesta)
@@ -88,11 +90,11 @@ Scarica l'intera cartella **`SkyTruth_Installer`** da questo repository (Code �
 3. Segui i passaggi a video (ogni fase è numerata e spiegata chiaramente)
 4. Al termine, troverai un'icona **SkyTruth** sul Desktop
 
-L'installazione scarica automaticamente tutto il necessario (circa 150-250 MB in totale, a seconda dei componenti già presenti).
+L'installazione scarica automaticamente tutto il necessario (circa 200-300 MB in totale, a seconda dei componenti già presenti).
 
 ### Modalità Offline (chiavetta USB, senza internet)
 
-> 📥 **Scarica il pacchetto già pronto**: [`SkyTruth-Offline-Bundle.zip`](https://github.com/professorgrandi/SkyTruth-Windows/releases/latest) (allegato alla Release più recente) contiene già tutti i file elencati qui sotto, pronti da estrarre — non serve scaricarli uno per uno manualmente.
+> 📥 **Scarica il pacchetto già pronto**: [`SkyTruth-Offline-Bundle.zip`](https://github.com/professorgrandi/SkyTruth-Windows/releases/latest) (~210 MB, allegato alla Release più recente) contiene già tutti i file elencati qui sotto, pronti da estrarre — non serve scaricarli uno per uno manualmente.
 
 Se vuoi installare SkyTruth su un PC senza connessione internet, prepara in anticipo (su un PC con internet) questi file, nelle sottocartelle indicate dentro `SkyTruth_Installer\offline\`:
 
@@ -104,12 +106,15 @@ Se vuoi installare SkyTruth su un PC senza connessione internet, prepara in anti
 | `offline\dump1090\` | `main.zip` *(rinominato così dopo il download)* | [GitHub - timseed/Dump1090\_Windows](https://github.com/timseed/Dump1090_Windows/archive/refs/heads/main.zip) |
 | `offline\ffmpeg\` | un qualsiasi file `ffmpeg-*.zip` *(build "essentials")* | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip) |
 | `offline\webview2\` | `MicrosoftEdgeWebview2Setup.exe` | [Microsoft Edge WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (pulsante "Get the link", bootstrapper Evergreen) |
+| `offline\python\wheels\` | pacchetti Python già pronti (`.whl`): `pywebview`, `opencv-python`, `pygrabber`, `Pillow` e tutte le loro dipendenze | generati con `pip download` (vedi sotto) |
+
+> 🤖 **Modo automatico (consigliato)**: invece di scaricare tutti questi file a mano, lancia lo script **`prepara_bundle_offline.ps1`** (incluso in questo repository, accanto a `install.ps1`) — scarica e organizza tutto da solo, compresi i pacchetti `.whl` nella cartella `wheels\` (richiede che tu abbia già fatto un'installazione online almeno una volta, cosicché lo script possa riusare quel Python per generare i pacchetti).
 
 Poi lancia `install.bat` normalmente: l'installer **cerca prima nella cartella `offline\`**, e scarica da internet solo ciò che non trova già pronto lì.
 
 > 💡 Puoi anche mescolare le due modalità: se metti solo *alcuni* dei file sopra, l'installer userà quelli offline disponibili e scaricherà solo i rimanenti.
 
-*(In alternativa a preparare i file uno per uno, ricordati che il pacchetto `SkyTruth-Offline-Bundle.zip` linkato sopra li contiene già tutti pronti — basta estrarlo dentro `offline\`.)*
+*(In alternativa a preparare i file uno per uno o ad eseguire `prepara_bundle_offline.ps1`, ricordati che il pacchetto `SkyTruth-Offline-Bundle.zip` linkato sopra li contiene già tutti pronti — basta scaricarlo ed estrarlo dentro `offline\`, nessun altro passaggio necessario.)*
 
 ### Cosa fa l'installer, passo per passo
 
@@ -120,7 +125,7 @@ Poi lancia `install.bat` normalmente: l'installer **cerca prima nella cartella `
 2. Creazione della struttura di cartelle in `C:\SkyTruth\`
 3. Download/installazione di Python 3.12.7 (embedded)
 4. Aggiunta del supporto **Tkinter** (necessario per l'interfaccia grafica — non incluso di default nel pacchetto embedded di Python)
-5. Abilitazione di `pip` e installazione delle librerie Python richieste (`pywebview`, `opencv-python`, `pygrabber`)
+5. Abilitazione di `pip` e installazione delle librerie Python richieste (`pywebview`, `opencv-python`, `pygrabber`, `Pillow`)
 6. Download/installazione di `dump1090`
 7. Download/installazione di `FFmpeg`
 8. Verifica/installazione del componente **WebView2 Runtime** (necessario per le mappe; già incluso di serie su Windows 11)
@@ -152,6 +157,7 @@ C:\SkyTruth\
 ├── maps\                    ← pagine delle mappe (generate automaticamente)
 │
 ├── temp\                    ← file temporanei di sessione (svuotata automaticamente)
+├── snapshots\               ← snapshot catturati per il sito web pubblico
 ├── sessioni_video\          ← qui vengono salvate le registrazioni video
 ├── sessioni_txt\            ← qui vengono salvati i file di rilevazione testuale
 └── logs\                    ← log giornalieri del programma
@@ -170,7 +176,8 @@ C:\SkyTruth\
    - la **piantina grafica "mainstream"** (dati OpenSky)
    - la **webcam** (scegli quale usare da un elenco con i nomi corretti)
 6. Facoltativo: avvia la **registrazione video** della sessione, e/o il **salvataggio delle rilevazioni** in un file di testo
-7. Premi **Esci** (o chiudi la finestra) per terminare in modo pulito: eventuali registrazioni attive vengono salvate automaticamente, tutti i processi collegati vengono chiusi, e i file temporanei vengono ripuliti
+7. Facoltativo: pubblica la sessione sul tuo **sito web pubblico** — clicca **"Cattura snapshot per il sito"** (con la webcam avviata), poi **"Carica sessione sul sito"**: inserisci il tuo nome utente GitHub e un token di accesso personale, e la sessione (data, numero di aerei rilevati, snapshot) viene caricata automaticamente sul tuo sito [SkyTruth-Windows-Site](https://github.com/professorgrandi/SkyTruth-Windows-Site)
+8. Premi **Esci** (o chiudi la finestra) per terminare in modo pulito: eventuali registrazioni attive vengono salvate automaticamente, tutti i processi collegati vengono chiusi, e i file temporanei vengono ripuliti
 
 ---
 
@@ -186,6 +193,7 @@ Tutti i componenti sono **gratuiti e open source** (o gratuiti a livello ufficia
 | [pywebview](https://pywebview.flowrl.com/) | Finestre native per le mappe (basato su WebView2) | BSD |
 | [OpenCV](https://opencv.org/) (`opencv-python`) | Accesso e visualizzazione della webcam | Apache 2.0 |
 | [pygrabber](https://github.com/bunkahle/pygrabber) | Rilevamento corretto dei nomi delle webcam | MIT |
+| [Pillow](https://python-pillow.org/) | Cattura degli snapshot per il sito web pubblico | HPND / MIT-like |
 | [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) | Motore di rendering per le mappe | Distribuzione gratuita Microsoft |
 | [Leaflet.js](https://leafletjs.com/) + [OpenStreetMap](https://www.openstreetmap.org/) | Visualizzazione cartografica | BSD-2-Clause / ODbL |
 | [OpenSky Network API](https://opensky-network.org/) | Dati pubblici "mainstream" sul traffico aereo | Gratuita, uso pubblico |
@@ -233,8 +241,26 @@ Controlla il file di log dettagliato in `C:\SkyTruth\logs\install_log_*.txt`. Mo
 - **Dati OpenSky**: interrogazione periodica dell'API pubblica REST, con bounding box calcolato da posizione e raggio inseriti dall'utente
 - **Registrazione video**: `FFmpeg` con cattura schermo (`gdigrab`), fermata in modo pulito (comando `q` su stdin) per non corrompere il file, poi ripulita dai metadati
 - **Python embedded + Tkinter**: il pacchetto "embeddable" ufficiale di Python non include Tkinter; l'installer lo aggiunge prelevando i file necessari da un'installazione Python completa temporanea (installata, usata, poi disinstallata automaticamente)
+- **Cattura snapshot**: tramite `Pillow` (`ImageGrab`), limitata al solo quadrante basso-destra dello schermo (finestra webcam)
+- **Pubblicazione sul sito**: tramite le API REST ufficiali di GitHub (`urllib.request`, nessuna libreria aggiuntiva), che leggono/scrivono direttamente `sessions.json`, la cartella `snapshots/` e il campo `nomeUtenteGitHub` di `config.js` nel repository del sito
 
 </details>
+
+---
+
+## Sito web pubblico (opzionale)
+
+SkyTruth può pubblicare automaticamente le tue sessioni di rilevazione su un sito web dedicato, ospitato gratuitamente su GitHub Pages: **[SkyTruth-Windows-Site](https://github.com/professorgrandi/SkyTruth-Windows-Site)** ([README del sito](https://github.com/professorgrandi/SkyTruth-Windows-Site/blob/main/README.md), con istruzioni dettagliate su come scaricarlo, pubblicarlo e personalizzarlo).
+
+**Per usarlo:**
+1. Crea un tuo repository pubblico chiamato **esattamente** `SkyTruth-Windows-Site` (puoi partire da quello collegato sopra come modello)
+2. Attiva **GitHub Pages** per quel repository (Settings → Pages → sorgente: branch `main`)
+3. Genera un **token di accesso personale** su GitHub (Settings del tuo account → Developer settings → Personal access tokens), con permesso **`repo`** (necessario per poter scrivere nel repository del sito)
+4. In SkyTruth, dopo aver catturato uno snapshot, clicca **"Carica sessione sul sito"** ed inserisci il tuo nome utente GitHub e il token quando richiesto
+
+Il token viene richiesto **ogni volta** (non viene mai salvato sul disco), per motivi di sicurezza.
+
+> ⚠️ Per privacy, il programma NON pubblica mai latitudine/longitudine/raggio della tua postazione — solo data/ora, conteggio aerei rilevati, e lo snapshot della sola finestra webcam.
 
 ---
 
