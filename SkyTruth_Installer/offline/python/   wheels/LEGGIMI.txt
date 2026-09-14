@@ -1,1 +1,3 @@
-aaa
+   Qui vanno i pacchetti Python già pronti (.whl), generati da
+   prepara_bundle_offline.ps1 oppure scaricati manualmente con:
+   pip download pywebview opencv-python pygrabber Pillow -d wheels
