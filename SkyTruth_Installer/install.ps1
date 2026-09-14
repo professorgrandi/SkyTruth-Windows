@@ -290,11 +290,18 @@ $tkinterOk = $false
 
 if ($pythonEmbeddedOk) {
     $tkinterPyd = Join-Path $PythonDir "_tkinter.pyd"
+    $zlibDll = Join-Path $PythonDir "zlib1.dll"
 
-    if (Test-Path $tkinterPyd) {
-        Scrivi-Log -Messaggio "Supporto Tkinter gia' presente, salto questo passaggio." -Livello "OK"
+    # Controlliamo TUTTI i file necessari, non solo _tkinter.pyd: se anche
+    # uno solo manca (es. da un'installazione precedente incompleta),
+    # rifacciamo l'intero passaggio invece di dare un falso "gia' presente".
+    if ((Test-Path $tkinterPyd) -and (Test-Path $zlibDll)) {
+        Scrivi-Log -Messaggio "Supporto Tkinter gia' presente (completo), salto questo passaggio." -Livello "OK"
         $tkinterOk = $true
     } else {
+        if ((Test-Path $tkinterPyd) -and (-not (Test-Path $zlibDll))) {
+            Scrivi-Log -Messaggio "Supporto Tkinter incompleto (manca zlib1.dll da un'installazione precedente): rifaccio il passaggio." -Livello "WARN"
+        }
         # Per ottenere i file di Tkinter, installiamo temporaneamente
         # (in una cartella a parte, senza PATH/icone/associazioni file)
         # l'installer completo ufficiale di Python, prendiamo solo i file
@@ -417,19 +424,40 @@ if ($pythonEmbeddedOk) {
             # senza setuptools l'installazione fallisce con l'errore
             # "Cannot import 'setuptools.build_meta'". Le installiamo prima
             # di tutto il resto per evitare il problema.
+            #
+            # Se la cartella 'offline\python\wheels' contiene dei pacchetti
+            # gia' pronti (.whl), li usiamo direttamente SENZA toccare
+            # internet (--no-index --find-links). Altrimenti scarichiamo
+            # tutto normalmente da PyPI.
+            $cartellaWheelsOffline = Join-Path $OfflineDir "python\wheels"
+            $usaWheelsOffline = $false
+
+            if (Test-Path $cartellaWheelsOffline) {
+                $trovatiWheels = Get-ChildItem -Path $cartellaWheelsOffline -Filter "*.whl" -ErrorAction SilentlyContinue
+                if ($trovatiWheels -and $trovatiWheels.Count -gt 0) {
+                    $usaWheelsOffline = $true
+                    Scrivi-Log -Messaggio "Trovati $($trovatiWheels.Count) pacchetti Python gia' pronti in modalita' offline ($cartellaWheelsOffline): li uso senza scaricare da internet." -Livello "OK"
+                }
+            }
+
+            $argomentiExtraPip = @("--no-warn-script-location", "--no-cache-dir")
+            if ($usaWheelsOffline) {
+                $argomentiExtraPip += @("--no-index", "--find-links", $cartellaWheelsOffline)
+            }
+
             Scrivi-Log -Messaggio "Installazione di 'setuptools' e 'wheel' (necessari per compilare alcune dipendenze)..." -Livello "INFO"
-            & $pythonExe -m pip install setuptools wheel --no-warn-script-location --no-cache-dir 2>&1 | ForEach-Object {
+            & $pythonExe -m pip install setuptools wheel @argomentiExtraPip 2>&1 | ForEach-Object {
                 Scrivi-Log -Messaggio "  $_" -Livello "INFO"
             }
             if ($LASTEXITCODE -ne 0) {
-                Segnala-Errore -Componente "pip install setuptools/wheel" -Dettaglio "Codice di uscita $LASTEXITCODE. L'installazione di pywebview potrebbe fallire."
+                Segnala-Errore -Componente "pip install setuptools/wheel" -Dettaglio "Codice di uscita $LASTEXITCODE. L'installazione delle librerie successive potrebbe fallire."
             }
 
-            # Installazione delle 3 librerie richieste da SkyTruth.
-            $pacchetti = @("pywebview", "opencv-python", "pygrabber")
+            # Installazione delle 4 librerie richieste da SkyTruth.
+            $pacchetti = @("pywebview", "opencv-python", "pygrabber", "Pillow")
             foreach ($pacchetto in $pacchetti) {
                 Scrivi-Log -Messaggio "Installazione di '$pacchetto' in corso (puo' richiedere qualche minuto)..." -Livello "INFO"
-                & $pythonExe -m pip install $pacchetto --no-warn-script-location --no-cache-dir 2>&1 | ForEach-Object {
+                & $pythonExe -m pip install $pacchetto @argomentiExtraPip 2>&1 | ForEach-Object {
                     Scrivi-Log -Messaggio "  $_" -Livello "INFO"
                 }
                 if ($LASTEXITCODE -ne 0) {

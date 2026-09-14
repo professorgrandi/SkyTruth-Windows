@@ -35,6 +35,8 @@ import traceback
 import webbrowser
 import http.server
 import json
+import re
+import base64
 import importlib.util
 import urllib.request
 import urllib.error
@@ -67,6 +69,11 @@ MAPS_DIR = os.path.join(BASE_DIR, "maps")
 FFMPEG_DIR = os.path.join(BASE_DIR, "ffmpeg")
 SESSIONI_DIR = os.path.join(BASE_DIR, "sessioni_video")
 SESSIONI_TXT_DIR = os.path.join(BASE_DIR, "sessioni_txt")
+SNAPSHOTS_DIR = os.path.join(BASE_DIR, "snapshots")
+
+# --- Sito web pubblico (SkyTruth-Windows-Site) ---
+GITHUB_API_BASE = "https://api.github.com"
+NOME_REPO_SITO = "SkyTruth-Windows-Site"
 BROWSER_DIR = os.path.join(BASE_DIR, "browser")
 
 DUMP1090_EXE = os.path.join(DUMP1090_DIR, "dump1090.exe")
@@ -1781,6 +1788,176 @@ def ferma_salvataggio_txt_e_salva():
 
 
 # --------------------------------------------------------------------------
+# SITO WEB PUBBLICO: cattura snapshot e caricamento sessione su GitHub
+# --------------------------------------------------------------------------
+def cattura_snapshot_webcam():
+    """
+    Cattura uno screenshot del SOLO quadrante basso-destra (dove si trova
+    la finestra webcam), lo salva in 'snapshots\\' con nome basato su
+    data/ora. Ritorna il percorso del file salvato, oppure None in caso
+    di errore.
+
+    Usiamo Pillow (ImageGrab) invece di arrangiarci con le sole API di
+    Windows: e' il modo piu' semplice ed affidabile per catturare una
+    porzione precisa dello schermo.
+    """
+    try:
+        from PIL import ImageGrab
+    except ImportError:
+        logging.error("Libreria 'Pillow' non installata.")
+        messagebox.showerror(
+            "SkyTruth - Libreria mancante",
+            "La libreria 'Pillow' non e' installata.\n"
+            "Apri un prompt dei comandi ed esegui:\n"
+            "pip install Pillow"
+        )
+        return None
+
+    try:
+        x, y, larghezza, altezza = calcola_quadranti()["basso_dx"]
+        immagine = ImageGrab.grab(bbox=(x, y, x + larghezza, y + altezza))
+
+        os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
+        nome_file = datetime.now().strftime("snapshot_%Y-%m-%d_%H-%M-%S.png")
+        percorso = os.path.join(SNAPSHOTS_DIR, nome_file)
+        immagine.save(percorso)
+
+        logging.info("Snapshot catturato: %s", percorso)
+        return percorso
+    except Exception:
+        logging.error("Errore nella cattura dello snapshot:\n%s",
+                       traceback.format_exc())
+        messagebox.showerror(
+            "SkyTruth - Errore snapshot",
+            "Non e' stato possibile catturare lo snapshot.\n"
+            f"Dettagli nel log: {LOG_DIR}"
+        )
+        return None
+
+
+def _richiesta_github(url, token, metodo="GET", corpo_dict=None):
+    """Esegue una richiesta HTTP verso le API di GitHub, con autenticazione."""
+    dati = json.dumps(corpo_dict).encode("utf-8") if corpo_dict is not None else None
+    richiesta = urllib.request.Request(
+        url, data=dati, method=metodo,
+        headers={
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "SkyTruth-App",
+        }
+    )
+    with urllib.request.urlopen(richiesta, timeout=20) as risposta:
+        return json.loads(risposta.read().decode("utf-8"))
+
+
+def _leggi_file_repo_sito(nome_utente, token, percorso_file):
+    """
+    Legge un file dal repository del sito. Ritorna (contenuto_testo, sha)
+    se il file esiste, oppure (None, None) se non esiste ancora.
+    """
+    url = f"{GITHUB_API_BASE}/repos/{nome_utente}/{NOME_REPO_SITO}/contents/{percorso_file}"
+    try:
+        risultato = _richiesta_github(url, token)
+        contenuto = base64.b64decode(risultato["content"]).decode("utf-8")
+        return contenuto, risultato["sha"]
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None, None
+        raise
+
+
+def _scrivi_file_repo_sito(nome_utente, token, percorso_file, contenuto_bytes,
+                             messaggio_commit, sha_esistente=None):
+    """Crea o aggiorna un file nel repository del sito."""
+    url = f"{GITHUB_API_BASE}/repos/{nome_utente}/{NOME_REPO_SITO}/contents/{percorso_file}"
+    corpo = {
+        "message": messaggio_commit,
+        "content": base64.b64encode(contenuto_bytes).decode("utf-8"),
+    }
+    if sha_esistente:
+        corpo["sha"] = sha_esistente
+    return _richiesta_github(url, token, metodo="PUT", corpo_dict=corpo)
+
+
+def carica_sessione_su_github(nome_utente, token, percorso_snapshot,
+                                orario_inizio, orario_fine,
+                                conteggio_ghost, conteggio_mainstream):
+    """
+    Carica una nuova sessione sul sito pubblico (repository
+    '<nome_utente>/SkyTruth-Windows-Site'):
+      1. Legge 'sessions.json' esistente e calcola il prossimo id libero
+      2. Carica l'immagine snapshot dentro 'snapshots/'
+      3. Aggiunge la nuova sessione a 'sessions.json' e lo salva
+      4. Aggiorna il campo 'nomeUtenteGitHub' dentro 'config.js'
+
+    Ritorna una tupla (successo: bool, messaggio: str).
+    """
+    try:
+        contenuto_json, sha_json = _leggi_file_repo_sito(nome_utente, token, "sessions.json")
+        sessioni = json.loads(contenuto_json) if contenuto_json else []
+
+        nuovo_id = max((s.get("id", 0) for s in sessioni), default=0) + 1
+        nome_file_snapshot = f"snapshot_{nuovo_id}.png"
+
+        nuova_sessione = {
+            "id": nuovo_id,
+            "titolo": f"Sessione {nuovo_id}",
+            "data_inizio": orario_inizio.strftime("%Y-%m-%dT%H:%M:%S"),
+            "data_fine": orario_fine.strftime("%Y-%m-%dT%H:%M:%S"),
+            "aerei_ghost": conteggio_ghost,
+            "aerei_mainstream": conteggio_mainstream,
+            "snapshot": f"snapshots/{nome_file_snapshot}",
+        }
+        sessioni.append(nuova_sessione)
+
+        with open(percorso_snapshot, "rb") as f:
+            dati_immagine = f.read()
+        _scrivi_file_repo_sito(
+            nome_utente, token, f"snapshots/{nome_file_snapshot}", dati_immagine,
+            f"Aggiunto snapshot sessione {nuovo_id}"
+        )
+
+        nuovo_contenuto_json = json.dumps(sessioni, indent=2, ensure_ascii=False).encode("utf-8")
+        _scrivi_file_repo_sito(
+            nome_utente, token, "sessions.json", nuovo_contenuto_json,
+            f"Aggiunta sessione {nuovo_id}", sha_esistente=sha_json
+        )
+
+        # Aggiorniamo anche il nome utente dentro config.js, cosi' il sito
+        # mostra sempre il titolo/link corretti senza bisogno di modifiche
+        # manuali da parte dell'utente.
+        contenuto_config, sha_config = _leggi_file_repo_sito(nome_utente, token, "config.js")
+        if contenuto_config:
+            nuovo_config = re.sub(
+                r'nomeUtenteGitHub:\s*"[^"]*"',
+                f'nomeUtenteGitHub: "{nome_utente}"',
+                contenuto_config
+            )
+            if nuovo_config != contenuto_config:
+                _scrivi_file_repo_sito(
+                    nome_utente, token, "config.js", nuovo_config.encode("utf-8"),
+                    "Aggiornato nome utente GitHub", sha_esistente=sha_config
+                )
+
+        logging.info("Sessione %s caricata correttamente sul sito.", nuovo_id)
+        return True, f"Sessione {nuovo_id} caricata correttamente sul sito."
+
+    except urllib.error.HTTPError as e:
+        logging.error("Errore HTTP durante il caricamento sul sito: %s %s", e.code, e.reason)
+        if e.code == 401:
+            return False, "Token non valido o scaduto. Controlla di averlo copiato correttamente."
+        if e.code == 404:
+            return False, (
+                f"Repository '{nome_utente}/{NOME_REPO_SITO}' non trovato.\n"
+                "Verifica il nome utente e che il repository del sito esista."
+            )
+        return False, f"Errore GitHub (HTTP {e.code}): {e.reason}"
+    except Exception as e:
+        logging.error("Errore durante il caricamento sul sito:\n%s", traceback.format_exc())
+        return False, f"Errore imprevisto: {e}"
+
+
+# --------------------------------------------------------------------------
 # FINESTRA MENU PRINCIPALE
 # --------------------------------------------------------------------------
 class MenuApp:
@@ -1802,6 +1979,9 @@ class MenuApp:
         self.raggio_km = None
         self._registrazione_attiva = False
         self._registrazione_txt_attiva = False
+        self._webcam_attiva = False
+        self._ultimo_snapshot = None
+        self._orario_inizio_sessione = None
 
         self._posiziona_finestra()
         self._costruisci_interfaccia()
@@ -2007,6 +2187,10 @@ class MenuApp:
         _mappa_reale_home["lon"] = self.longitudine
         _mappa_reale_home["raggio_km"] = self.raggio_km
 
+        # Segniamo l'inizio della sessione: usato come "data_inizio" se
+        # in seguito la sessione viene caricata sul sito pubblico.
+        self._orario_inizio_sessione = datetime.now()
+
         avviato = avvia_dump1090()
 
         if avviato:
@@ -2070,7 +2254,135 @@ class MenuApp:
                 command=self._esci_dal_programma
             ).pack(side="left", padx=10)
 
+            # --- Sito web pubblico: snapshot e caricamento sessione ---
+            riga_sito = tk.Frame(self.root)
+            riga_sito.pack(pady=(0, 8))
+
+            tk.Button(
+                riga_sito,
+                text="Cattura snapshot per il sito",
+                font=FONT_MENU,
+                command=self._cattura_snapshot
+            ).pack(side="left", padx=10)
+
+            tk.Button(
+                riga_sito,
+                text="Carica sessione sul sito",
+                font=FONT_MENU,
+                command=self._apri_popup_carica_sito
+            ).pack(side="left", padx=10)
+
             self._crea_sezione_donazioni()
+
+    def _cattura_snapshot(self):
+        """
+        Cattura uno snapshot della sola finestra webcam (quadrante
+        basso-destra) e lo tiene pronto per un eventuale caricamento
+        sul sito pubblico.
+        """
+        if not self._webcam_attiva:
+            messagebox.showwarning(
+                "SkyTruth - Snapshot",
+                "Devi prima avviare la visualizzazione della webcam."
+            )
+            return
+
+        percorso = cattura_snapshot_webcam()
+        if percorso:
+            self._ultimo_snapshot = percorso
+            messagebox.showinfo(
+                "SkyTruth - Snapshot",
+                f"Snapshot catturato correttamente:\n{percorso}"
+            )
+
+    def _apri_popup_carica_sito(self):
+        """
+        Apre una finestra dedicata per inserire nome utente GitHub e
+        token, poi carica l'ultimo snapshot e i dati della sessione
+        corrente sul sito pubblico (in un thread separato, per non
+        bloccare l'interfaccia durante la comunicazione di rete).
+        """
+        if not self._ultimo_snapshot:
+            messagebox.showwarning(
+                "SkyTruth - Carica sessione",
+                "Devi prima catturare uno snapshot con l'apposito bottone."
+            )
+            return
+
+        finestra = tk.Toplevel(self.root)
+        finestra.title("SkyTruth - Carica sessione sul sito")
+        finestra.grab_set()
+
+        tk.Label(
+            finestra, text="Nome utente GitHub:", font=FONT_MENU
+        ).pack(padx=24, pady=(20, 4))
+        campo_utente = tk.Entry(finestra, font=FONT_MENU, width=32)
+        campo_utente.pack(padx=24)
+        campo_utente.focus()
+
+        tk.Label(
+            finestra, text="Token GitHub:", font=FONT_MENU
+        ).pack(padx=24, pady=(14, 4))
+        campo_token = tk.Entry(finestra, font=FONT_MENU, width=32, show="*")
+        campo_token.pack(padx=24)
+
+        etichetta_stato = tk.Label(finestra, text="", font=FONT_MENU, fg="orange")
+        etichetta_stato.pack(pady=(12, 0))
+
+        def _invia():
+            nome_utente = campo_utente.get().strip()
+            token = campo_token.get().strip()
+
+            if not nome_utente or not token:
+                messagebox.showerror(
+                    "SkyTruth - Carica sessione",
+                    "Inserisci sia il nome utente GitHub che il token."
+                )
+                return
+
+            bottone_invia.config(state="disabled")
+            campo_utente.config(state="disabled")
+            campo_token.config(state="disabled")
+            etichetta_stato.config(text="Caricamento in corso, attendere...")
+
+            def _lavoro():
+                conteggio_ghost = len(_aerei_nel_raggio())
+                with _opensky_lock:
+                    conteggio_mainstream = len(_opensky_aerei)
+
+                orario_inizio = self._orario_inizio_sessione or datetime.now()
+
+                ok, messaggio = carica_sessione_su_github(
+                    nome_utente, token, self._ultimo_snapshot,
+                    orario_inizio, datetime.now(),
+                    conteggio_ghost, conteggio_mainstream
+                )
+                self.root.after(0, lambda: _fine_caricamento(ok, messaggio))
+
+            threading.Thread(target=_lavoro, daemon=True).start()
+
+        def _fine_caricamento(ok, messaggio):
+            finestra.destroy()
+            if ok:
+                messagebox.showinfo("SkyTruth - Carica sessione", messaggio)
+            else:
+                messagebox.showerror("SkyTruth - Errore caricamento", messaggio)
+
+        bottone_invia = tk.Button(
+            finestra, text="Invia", font=FONT_MENU_BOLD, command=_invia
+        )
+        bottone_invia.pack(pady=18)
+
+        finestra.update_idletasks()
+        x_root = self.root.winfo_rootx()
+        y_root = self.root.winfo_rooty()
+        larghezza_root = self.root.winfo_width()
+        altezza_root = self.root.winfo_height()
+        larghezza_fin = finestra.winfo_width()
+        altezza_fin = finestra.winfo_height()
+        x_fin = x_root + (larghezza_root - larghezza_fin) // 2
+        y_fin = y_root + (altezza_root - altezza_fin) // 2
+        finestra.geometry(f"+{max(x_fin, 0)}+{max(y_fin, 0)}")
 
     def _crea_sezione_donazioni(self):
         """
@@ -2307,6 +2619,7 @@ class MenuApp:
             )
             x, y, larghezza, altezza = calcola_quadranti()["basso_dx"]
             avvia_webcam(indice, x, y, larghezza, altezza)
+            self._webcam_attiva = True
 
         for indice, nome in webcam_trovate:
             tk.Button(
@@ -2363,7 +2676,7 @@ def main():
     # Creiamo subito le cartelle base, se non esistono, cosi' il resto
     # del programma le trova sempre pronte.
     for cartella in (LOG_DIR, TEMP_DIR, DUMP1090_DIR, MAPS_DIR,
-                      FFMPEG_DIR, SESSIONI_DIR, SESSIONI_TXT_DIR, BROWSER_DIR):
+                      FFMPEG_DIR, SESSIONI_DIR, SESSIONI_TXT_DIR, SNAPSHOTS_DIR, BROWSER_DIR):
         try:
             os.makedirs(cartella, exist_ok=True)
         except Exception:
