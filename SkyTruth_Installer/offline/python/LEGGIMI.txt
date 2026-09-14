@@ -2,3 +2,12 @@ Metti qui:
 - python-3.12.7-embed-amd64.zip
 - get-pip.py
 - python-3.12.7-amd64.exe  (installer COMPLETO, serve solo per prelevare Tkinter)
+
+Sottocartella "wheels\":
+- i pacchetti Python gia' pronti (.whl): pywebview, opencv-python,
+  pygrabber, Pillow, setuptools, wheel (con tutte le loro dipendenze)
+
+SUGGERIMENTO: invece di preparare questi file a mano, usa lo script
+"prepara_bundle_offline.ps1" (nella cartella principale dell'installer):
+li scarica e organizza tutti automaticamente, incluso il contenuto di
+questa cartella "wheels\".
