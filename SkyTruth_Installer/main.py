@@ -40,6 +40,7 @@ import base64
 import importlib.util
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime
 
 import tkinter as tk
@@ -109,6 +110,16 @@ MAPPA_OPENSKY_HTTP_PORT = 8082
 
 OPENSKY_API_URL = "https://opensky-network.org/api/states/all"
 OPENSKY_INTERVALLO_AGGIORNAMENTO_SEC = 15
+
+# Autenticazione OAuth2 (obbligatoria dal 18 marzo 2026, sostituisce il
+# vecchio sistema utente/password). Senza credenziali, si continua
+# comunque in modalita' anonima (piu' limitata, ma funzionante).
+OPENSKY_AUTH_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
+
+_opensky_client_id = None
+_opensky_client_secret = None
+_opensky_token = None
+_opensky_token_scadenza = 0  # timestamp Unix di scadenza del token
 
 MAPPA_VIEWER_SCRIPT = os.path.join(MAPS_DIR, "mappa_viewer.py")
 PYWEBVIEW_ISTRUZIONI_INSTALLAZIONE = "pip install pywebview"
@@ -1064,6 +1075,59 @@ def _calcola_bounding_box(lat, lon, raggio_km):
     return (lat - delta_lat, lon - delta_lon, lat + delta_lat, lon + delta_lon)
 
 
+def imposta_credenziali_opensky(client_id, client_secret):
+    """Salva le credenziali OpenSky in memoria (mai su disco), per questa sessione."""
+    global _opensky_client_id, _opensky_client_secret, _opensky_token, _opensky_token_scadenza
+    _opensky_client_id = client_id
+    _opensky_client_secret = client_secret
+    # Forziamo la richiesta di un nuovo token al prossimo utilizzo
+    _opensky_token = None
+    _opensky_token_scadenza = 0
+
+
+def _ottieni_token_opensky():
+    """
+    Ritorna un token OAuth2 valido per OpenSky, richiedendone uno nuovo
+    solo se manca o sta per scadere. Ritorna None se non sono state
+    impostate credenziali, o se la richiesta del token fallisce (in tal
+    caso si procede in modalita' anonima, senza bloccare il programma).
+    """
+    global _opensky_token, _opensky_token_scadenza
+
+    if not _opensky_client_id or not _opensky_client_secret:
+        return None
+
+    # Rinnoviamo con un margine di sicurezza di 60 secondi prima della
+    # scadenza effettiva, per non rischiare di usare un token appena
+    # scaduto durante una richiesta.
+    if _opensky_token and time.time() < (_opensky_token_scadenza - 60):
+        return _opensky_token
+
+    try:
+        dati_form = urllib.parse.urlencode({
+            "grant_type": "client_credentials",
+            "client_id": _opensky_client_id,
+            "client_secret": _opensky_client_secret,
+        }).encode("utf-8")
+
+        richiesta = urllib.request.Request(
+            OPENSKY_AUTH_URL, data=dati_form, method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        with urllib.request.urlopen(richiesta, timeout=15) as risposta:
+            corpo = json.loads(risposta.read().decode("utf-8"))
+
+        _opensky_token = corpo["access_token"]
+        _opensky_token_scadenza = time.time() + corpo.get("expires_in", 1800)
+        logging.info("Token OpenSky ottenuto correttamente (valido %s secondi).",
+                     corpo.get("expires_in", 1800))
+        return _opensky_token
+    except Exception:
+        logging.warning("Impossibile ottenere il token OpenSky, procedo in modalita' anonima:\n%s",
+                         traceback.format_exc())
+        return None
+
+
 def _thread_lettura_opensky():
     """
     Interroga periodicamente l'API pubblica di OpenSky Network e aggiorna
@@ -1090,9 +1154,12 @@ def _thread_lettura_opensky():
             url = (f"{OPENSKY_API_URL}?lamin={lamin}&lomin={lomin}"
                    f"&lamax={lamax}&lomax={lomax}")
 
-            richiesta = urllib.request.Request(
-                url, headers={"User-Agent": "SkyTruth/1.0"}
-            )
+            intestazioni = {"User-Agent": "SkyTruth/1.0"}
+            token = _ottieni_token_opensky()
+            if token:
+                intestazioni["Authorization"] = f"Bearer {token}"
+
+            richiesta = urllib.request.Request(url, headers=intestazioni)
             with urllib.request.urlopen(richiesta, timeout=10) as risposta:
                 dati_grezzi = json.loads(risposta.read().decode("utf-8"))
 
@@ -1982,6 +2049,7 @@ class MenuApp:
         self._webcam_attiva = False
         self._ultimo_snapshot = None
         self._orario_inizio_sessione = None
+        self._opensky_credenziali_richieste = False
 
         self._posiziona_finestra()
         self._costruisci_interfaccia()
@@ -2540,16 +2608,89 @@ class MenuApp:
 
     def _apri_mappa_opensky(self):
         """
-        Avvia il server della mappa OpenSky "mainstream" (se non gia'
-        attivo) e apre la finestra nativa gia' posizionata nel quadrante
-        alto-destra.
+        La prima volta in questa sessione, chiede se si vogliono
+        impostare le credenziali OpenSky (facoltative: senza, si procede
+        comunque in modalita' anonima). Poi avvia il server della mappa
+        OpenSky "mainstream" e apre la finestra nativa gia' posizionata
+        nel quadrante alto-destra.
         """
+        if not self._opensky_credenziali_richieste:
+            self._opensky_credenziali_richieste = True
+            self._mostra_popup_credenziali_opensky(self._continua_apertura_mappa_opensky)
+        else:
+            self._continua_apertura_mappa_opensky()
+
+    def _continua_apertura_mappa_opensky(self):
         x, y, larghezza, altezza = calcola_quadranti()["alto_dx"]
 
         avvia_mappa_opensky(
             self.latitudine, self.longitudine, self.raggio_km,
             x, y, larghezza, altezza
         )
+
+    def _mostra_popup_credenziali_opensky(self, callback_continua):
+        """
+        Finestra facoltativa per impostare client_id/client_secret di
+        OpenSky (autenticazione OAuth2). Senza credenziali si procede
+        comunque in modalita' anonima (piu' limitata, ma funzionante).
+        Le credenziali NON vengono mai salvate su disco.
+        """
+        finestra = tk.Toplevel(self.root)
+        finestra.title("SkyTruth - Credenziali OpenSky (facoltative)")
+        finestra.grab_set()
+
+        tk.Label(
+            finestra,
+            text="Puoi impostare le credenziali OpenSky per un accesso\n"
+                 "più affidabile ai dati (facoltativo).",
+            font=FONT_MENU, justify="center"
+        ).pack(padx=24, pady=(20, 10))
+
+        tk.Label(finestra, text="Client ID:", font=FONT_MENU).pack(padx=24, pady=(6, 4))
+        campo_client_id = tk.Entry(finestra, font=FONT_MENU, width=36)
+        campo_client_id.pack(padx=24)
+        campo_client_id.focus()
+
+        tk.Label(finestra, text="Client Secret:", font=FONT_MENU).pack(padx=24, pady=(14, 4))
+        campo_client_secret = tk.Entry(finestra, font=FONT_MENU, width=36, show="*")
+        campo_client_secret.pack(padx=24)
+
+        def _usa_credenziali():
+            client_id = campo_client_id.get().strip()
+            client_secret = campo_client_secret.get().strip()
+            if client_id and client_secret:
+                imposta_credenziali_opensky(client_id, client_secret)
+                logging.info("Credenziali OpenSky impostate per questa sessione.")
+            finestra.destroy()
+            callback_continua()
+
+        def _modalita_anonima():
+            finestra.destroy()
+            callback_continua()
+
+        riga_bottoni = tk.Frame(finestra)
+        riga_bottoni.pack(pady=(18, 20))
+
+        tk.Button(
+            riga_bottoni, text="Usa queste credenziali",
+            font=FONT_MENU_BOLD, command=_usa_credenziali
+        ).pack(side="left", padx=10)
+
+        tk.Button(
+            riga_bottoni, text="Continua in modalità anonima",
+            font=FONT_MENU, command=_modalita_anonima
+        ).pack(side="left", padx=10)
+
+        finestra.update_idletasks()
+        x_root = self.root.winfo_rootx()
+        y_root = self.root.winfo_rooty()
+        larghezza_root = self.root.winfo_width()
+        altezza_root = self.root.winfo_height()
+        larghezza_fin = finestra.winfo_width()
+        altezza_fin = finestra.winfo_height()
+        x_fin = x_root + (larghezza_root - larghezza_fin) // 2
+        y_fin = y_root + (altezza_root - altezza_fin) // 2
+        finestra.geometry(f"+{max(x_fin, 0)}+{max(y_fin, 0)}")
 
     def _scegli_webcam(self):
         """
